@@ -116,7 +116,7 @@ use."
     info "Restoring original inputs."
     local -r rundir=/run/user/$(id -u)/ninja360
     if [[ -d $rundir ]]; then
-      for evdev_remap_symlink in "$rundir"/evdev*; do
+      for evdev_remap_symlink in "$rundir"/*; do
         if [[ ! -L $evdev_remap_symlink ]]; then
           error "Symlink \"$evdev_remap_symlink\" doesn't exist/isn't a symlink."
           continue
