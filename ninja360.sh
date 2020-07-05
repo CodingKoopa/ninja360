@@ -66,6 +66,49 @@ function debug() {
   fi
 }
 
+# Searches for a graphical method of privilege escalation. Looks for an askpass program that can be
+# used with sudo, then kdesu type programs, and then zenity.
+# Globals Read:
+#   - (Optional) SUDO_ASKPASS: The path to the askpass program used by sudo -A. Used if set.
+#   - (Optional) SSH_ASKPASS: The path to the askpass program used by ssh. Used as SUDO_ASKPASS if
+# set.
+# Globals Exported:
+#   - _sudo: The graphical sudo command resolved.
+#   -  SUDO_ASKPASS: The (potentially new) path to the askpass program, if being used.
+function find_graphical_sudo() {
+  # The SUDO_ASKPASS environment variable is already set, so we can use -A without any further
+  # action.
+  if [[ -n $SUDO_ASKPASS ]]; then
+    export _sudo="sudo -A"
+    return
+  fi
+  # The SSH_ASKPASS environment variable is set, use that as the askpass program. This has
+  # potentially unwanted behavior in that, if SUDO_ASKPASS is not set, but there is an askpass
+  # program specified in /etc/sudo.conf, SSH_ASKPASS will take precedence for this script.
+  if [[ -n $SSH_ASKPASS ]]; then
+    export SUDO_ASKPASS=$SSH_ASKPASS
+    export _sudo="sudo -A"
+    return
+  fi
+  # No askpass? Okay, getting a little desparate. Do we have any graphical privilege escalation
+  # programs?
+  local -ra priv_esc_programs=(gksudo kdesu pkexec)
+  for program in "${priv_esc_programs[@]}"; do
+    if command -v "$program" &>/dev/null; then
+      export _sudo=$program
+      return
+    fi
+  done
+  # Oh dear. Do we have zenity?
+  if [[ $zenity_present = true ]]; then
+    export SUDO_ASKPASS=$ninja_dir/zenity-askpass
+    export _sudo="sudo -A"
+    return
+  fi
+  error "No graphical sudo input method found. Using terminal input."
+  export _sudo="sudo"
+}
+
 # Resolves a symlink to an evdev.
 # Arguments:
 #   The ID of the evdev, as it is in "/dev/input/by-id/", without the "-event-joystick" suffix.
@@ -128,7 +171,7 @@ use."
           error "$realpath doesn't exist/isn't a character device."
           continue
         fi
-        sudo mv "$realpath" /dev/input/"$(basename "$evdev_remap_symlink")" || true
+        $_sudo mv "$realpath" /dev/input/"$(basename "$evdev_remap_symlink")" || true
         rm "$evdev_remap_symlink"
       done
     fi
@@ -192,17 +235,25 @@ use."
   if [[ -c $port_1_evdev_path ]]; then
     local -r port_1_evdev_remap_path=/dev/input/evdev91
     # Move the evdev device out of /dev/input/ so that games do not try to use it.
-    sudo mv "$port_1_evdev_path" "$port_1_evdev_remap_path"
+    $_sudo mv "$port_1_evdev_path" "$port_1_evdev_remap_path"
     # Make a link including the original evdev name so that it can be restored.
     ln -s "$port_1_evdev_remap_path" "$rundir"/"$(basename "$port_1_evdev_path")"
     nohup xboxdrv "${common_args[@]}" --evdev "$port_1_evdev_remap_path" >xboxdrv.0.log &
   fi
   if [[ -c $port_2_evdev_path ]]; then
     local -r port_2_evdev_remap_path=/dev/input/evdev92
-    sudo mv "$port_2_evdev_path" "$port_2_evdev_remap_path"
+    $_sudo mv "$port_2_evdev_path" "$port_2_evdev_remap_path"
     ln -s "$port_2_evdev_remap_path" "$rundir"/"$(basename "$port_2_evdev_path")"
     nohup xboxdrv "${common_args[@]}" --evdev "$port_2_evdev_remap_path" >xboxdrv.1.log &
   fi
 }
 
+readonly ninja_dir=$(dirname "$(realpath -s "$0")")
+if command -v "zenity" &>/dev/null; then
+  readonly zenity_present=true
+else
+  readonly zenity_present=false
+fi
+
+find_graphical_sudo
 ninja_360 "$@"
